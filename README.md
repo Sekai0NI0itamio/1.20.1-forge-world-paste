@@ -60,3 +60,5 @@ install the missing mods and re-run for a 1:1 copy.
 **CI only.** Pushing to `main` (or any PR) triggers `.github/workflows/build.yml`
 (`gradle build --no-daemon`, Java 17, Gradle 8.8). Tags `v*` also cut a GitHub Release.
 Do not run `gradle build` locally — the author builds exclusively via GitHub Actions.
+
+If this project is useful, consider giving it a star. It helps others discover the project and motivates continued development.
