@@ -193,7 +193,7 @@ public final class CopyCommand {
                             case TURBO -> "as fast as ~80% of each tick allows (heavy lag expected)";
                             case INSTANT -> "UNCAPPED — server will freeze until done";
                         };
-                        if (mode == PasteSession.PasteMode.TURBO || mode == PasteMode.INSTANT) {
+                        if (mode == PasteSession.PasteMode.TURBO || mode == PasteSession.PasteMode.INSTANT) {
                             WorldPasteMod.LOGGER.warn("[WorldPaste] {} started in {} mode: {} chunks — expect severe lag{}",
                                     zip, mode, total,
                                     mode == PasteSession.PasteMode.INSTANT
