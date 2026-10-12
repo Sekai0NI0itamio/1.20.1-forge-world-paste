@@ -53,7 +53,8 @@ public final class CopyCommand {
     };
 
     private static Path inboxDir(MinecraftServer server) {
-        return server.getServerDirectory().resolve(PasteConfig.INBOX_DIR);
+        return server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT)
+                .getParent().resolve(PasteConfig.INBOX_DIR);
     }
 
     @SubscribeEvent
@@ -119,7 +120,8 @@ public final class CopyCommand {
         src.sendSuccess(() -> Component.literal("WorldPaste: unpacking " + zip + " in background…"), true);
         Thread worker = new Thread(() -> {
             try {
-                Path tmp = server.getServerDirectory().resolve(PasteConfig.TMP_DIR).resolve("paste-" + System.currentTimeMillis());
+                Path tmp = server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT)
+                        .getParent().resolve(PasteConfig.TMP_DIR).resolve("paste-" + System.currentTimeMillis());
                 SourceWorldReader.unzip(zipFile, tmp);
                 var worldRoot = SourceWorldReader.findWorldRoot(tmp);
                 // Source dim defaults to overworld folder layout of the EXPORTED world.

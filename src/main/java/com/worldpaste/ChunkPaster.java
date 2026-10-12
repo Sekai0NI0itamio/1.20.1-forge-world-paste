@@ -3,6 +3,7 @@ package com.worldpaste;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.DoubleTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.resources.ResourceLocation;
@@ -129,10 +130,9 @@ public final class ChunkPaster {
                 CompoundTag eTag = ((CompoundTag) t).copy();
                 try {
                     offsetEntityTag(eTag, dx, dz);
-                    Optional<Function<Entity, Entity>> fn = EntityType.loadEntityRecursive(eTag, level, e -> e);
-                    if (fn.isPresent()) {
-                        Entity e = fn.get().get();
-                        level.addFreshEntity(e);
+                    Entity spawned = EntityType.loadEntityRecursive(eTag, level, e -> e);
+                    if (spawned != null) {
+                        level.addFreshEntity(spawned);
                         ents++;
                     }
                 } catch (Exception ex) {
@@ -143,12 +143,10 @@ public final class ChunkPaster {
 
         // 4) Mark dirty + relight so the paste survives relog with correct lighting/heightmaps.
         try {
-            var chunk = level.getChunkAt(targetPos);
+            var chunk = level.getChunk(targetPos.x, targetPos.z);
             chunk.setUnsaved(true);
-            level.getChunkSource().getLightEngine().relight(
-                    new java.util.HashSet<>(), c -> {}, c -> {});
         } catch (Exception ex) {
-            LOG.debug("Relight hint failed for {} (non-fatal): {}", targetPos, ex.toString());
+            LOG.debug("Mark-dirty failed for {} (non-fatal): {}", targetPos, ex.toString());
         }
         return new PasteResult(blocks, bes, ents, skipped);
     }
@@ -166,9 +164,9 @@ public final class ChunkPaster {
             CompoundTag eTag = ((CompoundTag) t).copy();
             try {
                 offsetEntityTag(eTag, dx, dz);
-                Optional<Function<Entity, Entity>> fn = EntityType.loadEntityRecursive(eTag, level, e -> e);
-                if (fn.isPresent()) {
-                    level.addFreshEntity(fn.get().get());
+                Entity spawned = EntityType.loadEntityRecursive(eTag, level, e -> e);
+                if (spawned != null) {
+                    level.addFreshEntity(spawned);
                     count++;
                 }
             } catch (Exception ex) {
@@ -184,8 +182,8 @@ public final class ChunkPaster {
         if (tag.contains("Pos", Tag.TAG_LIST)) {
             var pos = tag.getList("Pos", Tag.TAG_DOUBLE);
             if (pos.size() >= 3) {
-                pos.setDouble(0, pos.getDouble(0) + dx);
-                pos.setDouble(2, pos.getDouble(2) + dz);
+                pos.set(0, DoubleTag.valueOf(pos.getDouble(0) + dx));
+                pos.set(2, DoubleTag.valueOf(pos.getDouble(2) + dz));
             }
         }
         if (tag.contains("TileX", Tag.TAG_INT)) tag.putInt("TileX", tag.getInt("TileX") + dx);
