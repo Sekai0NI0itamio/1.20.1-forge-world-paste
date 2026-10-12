@@ -1,0 +1,14 @@
+/build/
+/run/
+/run-data/
+out/
+bin/
+.gradle/
+mcmodsrepo/
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+/worldpaste_inbox/
+/worldpaste_tmp/
