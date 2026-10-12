@@ -24,10 +24,16 @@ Extra commands (all OP level 2):
 - Unpacks the zip to temp (zip-slip safe), finds the world root (handles top-level folders).
 - Scans `region/*.mca` headers, pastes in expanding rings from the centre at **~3 chunks/second**
   on the server thread (tick queue), so TPS stays up.
-- Copies blocks + block entities + entities (`entities/*.mca` too) with position offset,
-  marks chunks dirty + relights so the paste survives relog.
+- Copies blocks + block entities + entities (`entities/*.mca` too) with position offset
+  (flag-2 writes: no neighbour cascades), marks chunks dirty so the paste survives relog.
+  Lighting/heightmaps recompute via vanilla chunk save/load — relog after a big paste
+  if lighting looks streaky.
 - Merges `playerdata/*.dat` **without ever silently wiping a live player**: first pass backs up
-  + keeps live on conflict, operator resolves with `/copy players <mode>`.
+  (timestamped, in `playerdata_backup_worldpaste/`) + keeps live on conflict, operator resolves
+  with `/copy players <mode>`. `rename-copy` saves the incoming data as a NEW `.dat` —
+  rename that file to the target player's UUID to assign it.
+- Temp extractions live under `./worldpaste_tmp/paste-<millis>/` — delete old ones after
+  conflicts are resolved (they're kept until then because pending conflicts reference them).
 
 ## Heavily-modded worlds
 

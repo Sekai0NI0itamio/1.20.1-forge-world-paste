@@ -58,9 +58,10 @@ public final class PlayerDataMerger {
                         continue;
                     }
                     if (Files.exists(live)) {
-                        Files.copy(live, backupDir.resolve(name + ".bak"),
+                        String stamp = "." + System.currentTimeMillis() + ".bak";
+                        Files.copy(live, backupDir.resolve(name + stamp),
                                 StandardCopyOption.REPLACE_EXISTING);
-                        Files.copy(src, backupDir.resolve(name + ".source"),
+                        Files.copy(src, backupDir.resolve(name + ".source" + stamp),
                                 StandardCopyOption.REPLACE_EXISTING);
                         conflicts.add(new Conflict(uuid, src, live));
                         kept++;
@@ -85,16 +86,25 @@ public final class PlayerDataMerger {
      */
     public static String resolve(MinecraftServer server, List<Conflict> conflicts, String mode) throws IOException {
         Path liveDir = server.getWorldPath(LevelResource.PLAYER_DATA_DIR);
+        Path backupDir = liveDir.resolveSibling("playerdata_backup_worldpaste");
+        Files.createDirectories(backupDir);
         int done = 0;
         for (Conflict c : conflicts) {
             Path live = liveDir.resolve(c.uuid() + ".dat");
             switch (mode) {
                 case "overwrite" -> {
+                    // Re-backup the CURRENT live file: it may have changed since the first pass.
+                    if (Files.exists(live)) {
+                        Files.copy(live, backupDir.resolve(c.uuid() + ".dat." + System.currentTimeMillis() + ".bak"),
+                                StandardCopyOption.REPLACE_EXISTING);
+                    }
                     Files.copy(c.sourceFile(), live, StandardCopyOption.REPLACE_EXISTING);
                     done++;
                 }
                 case "keep" -> done++; // already kept; nothing to do
                 case "rename-copy" -> {
+                    // Saved as a NEW .dat: operator renames it to the target player's UUID
+                    // (see /copy players conflicts output) to assign it.
                     String fresh = UUID.randomUUID() + ".dat";
                     Files.copy(c.sourceFile(), liveDir.resolve(fresh));
                     done++;
@@ -120,7 +130,9 @@ public final class PlayerDataMerger {
             sx += c.x;
             sz += c.z;
         }
-        ChunkPos sourceCenter = new ChunkPos((int) (sx / sourceChunks.size()), (int) (sz / sourceChunks.size()));
+        ChunkPos sourceCenter = new ChunkPos(
+                (int) Math.floorDiv(sx, sourceChunks.size()),
+                (int) Math.floorDiv(sz, sourceChunks.size()));
         ChunkPos targetCenter = new ChunkPos(centerBlockX >> 4, centerBlockZ >> 4);
         int dx = targetCenter.x - sourceCenter.x;
         int dz = targetCenter.z - sourceCenter.z;

@@ -124,46 +124,55 @@ public final class CopyCommand {
                         .getParent().resolve(PasteConfig.TMP_DIR).resolve("paste-" + System.currentTimeMillis());
                 SourceWorldReader.unzip(zipFile, tmp);
                 var worldRoot = SourceWorldReader.findWorldRoot(tmp);
-                // Source dim defaults to overworld folder layout of the EXPORTED world.
-                // Most exports zip the overworld; nether/end folders travel inside the same root.
+                // Source dim mirrors the TARGET dim folder layout when present
+                // (DIM-1/DIM1 travel inside the same export); else fall back to overworld.
                 var source = SourceWorldReader.scan(worldRoot, "overworld");
+                if (source.regionChunks().isEmpty() && !dim.equals("overworld")) {
+                    source = SourceWorldReader.scan(worldRoot, dim);
+                }
                 if (source.regionChunks().isEmpty()) {
                     server.execute(() -> src.sendFailure(Component.literal(
                             "WorldPaste: no region/*.mca found in " + zip + " (root=" + worldRoot.getFileName() + ").")));
                     return;
                 }
-                Deque<PlayerDataMerger.ChunkTask> tasks =
-                        PlayerDataMerger.buildTasks(source.regionChunks(), x, z);
+                final var finalSource = source;
+                final Deque<PlayerDataMerger.ChunkTask> tasks =
+                        PlayerDataMerger.buildTasks(finalSource.regionChunks(), x, z);
 
-                // Playerdata first pass (keep-live on conflict), so block paste never wipes inventories.
-                PlayerDataMerger.MergeReport report =
-                        PlayerDataMerger.mergeKeepLive(server, source.playerDataDir());
-                synchronized (CopyCommand.class) {
-                    pendingConflicts = report.conflicts();
-                }
-
-                PasteSession session = new PasteSession(server, level, source, tasks,
-                        zip + " -> " + dim + " @ " + x + "," + z);
-                String note = "playerdata: " + report.copied() + " copied, "
-                        + report.keptLive() + " conflicts kept-live, "
-                        + report.skipped() + " skipped."
-                        + (report.conflicts().isEmpty() ? ""
-                        : " Resolve with /copy players conflicts, then overwrite|keep|rename-copy|delete-source.");
-                session.setFinishNote("");
-                if (!PasteSession.start(session)) {
-                    server.execute(() -> src.sendFailure(Component.literal("WorldPaste: another paste started first.")));
-                    return;
-                }
-                int total = tasks.size();
-                ChunkPos center = new ChunkPos(x >> 4, z >> 4);
+                // Playerdata merge + session start run ON the server thread: live .dat
+                // files must never be copied while the server thread is saving them.
                 server.execute(() -> {
-                    src.sendSuccess(() -> Component.literal(
-                            "WorldPaste: started " + total + " chunks at ~3/sec centred on chunk "
-                                    + center + " (" + total / 3 + "s est). " + note), true);
-                    if (!report.conflicts().isEmpty()) {
+                    try {
+                        PlayerDataMerger.MergeReport report =
+                                PlayerDataMerger.mergeKeepLive(server, finalSource.playerDataDir());
+                        synchronized (CopyCommand.class) {
+                            pendingConflicts = report.conflicts();
+                        }
+
+                        PasteSession session = new PasteSession(server, level, finalSource, tasks,
+                                zip + " -> " + dim + " @ " + x + "," + z);
+                        String note = "playerdata: " + report.copied() + " copied, "
+                                + report.keptLive() + " conflicts kept-live, "
+                                + report.skipped() + " skipped."
+                                + (report.conflicts().isEmpty() ? ""
+                                : " Resolve with /copy players conflicts, then overwrite|keep|rename-copy|delete-source.");
+                        if (!PasteSession.start(session)) {
+                            src.sendFailure(Component.literal("WorldPaste: another paste started first."));
+                            return;
+                        }
+                        int total = tasks.size();
+                        ChunkPos center = new ChunkPos(x >> 4, z >> 4);
                         src.sendSuccess(() -> Component.literal(
-                                "WorldPaste: " + report.conflicts().size()
-                                        + " playerdata conflicts — live players kept. Run /copy players conflicts to list."), true);
+                                "WorldPaste: started " + total + " chunks at ~3/sec centred on chunk "
+                                        + center + " (" + total / 3 + "s est). " + note), true);
+                        if (!report.conflicts().isEmpty()) {
+                            src.sendSuccess(() -> Component.literal(
+                                    "WorldPaste: " + report.conflicts().size()
+                                            + " playerdata conflicts — live players kept. Run /copy players conflicts to list."), true);
+                        }
+                    } catch (Exception ex) {
+                        WorldPasteMod.LOGGER.error("WorldPaste failed to start (server thread)", ex);
+                        src.sendFailure(Component.literal("WorldPaste failed: " + ex.getMessage()));
                     }
                 });
             } catch (Exception ex) {

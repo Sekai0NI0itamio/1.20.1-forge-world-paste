@@ -28,14 +28,20 @@ import java.util.function.Function;
  * <p>Heavily-modded-world safety (requires the same mods loaded on this server):
  * <ul>
  *   <li>Source chunk NBT is deserialized with the LIVE server registries
- *       ({@link ChunkSerializer#read} + {@code level.registryAccess()}), so modded
- *       blocks resolve to the server's current modded set. Unknown modded entries
- *       (mod missing here) are skipped + counted, never crash the paste.</li>
+ *       ({@link ChunkSerializer#read}), so modded blocks resolve to the server's
+ *       current modded set. Entries from mods missing here deserialize as air
+ *       (vanilla missing-mapping behaviour) or fail the whole chunk, which is
+ *       then skipped + counted — never a crash.</li>
  *   <li>Block-entity NBT is copied verbatim (generic {@link CompoundTag}), so modded
- *       tile data (inventories, machines) survives when the mod is present.</li>
- *   <li>Entities are re-spawned via {@link EntityType#loadEntityRecursive} with
- *       position offset, so modded mobs work when their mod is present.</li>
+ *       tile data survives when the mod is present. BEs whose block is now missing
+ *       (no block entity on the target state) are skipped + counted.</li>
+ *   <li>Entities are re-spawned with FRESH UUIDs (source UUIDs stripped) so re-pastes
+ *       never collide with live entities; unknown modded entity ids are skipped + counted.</li>
  * </ul>
+ *
+ * <p>Perf honesty: blocks are written with flag 2 (client sync, NO neighbour updates)
+ * to avoid redstone/pipe cascades mid-paste; lighting + heightmaps are left for
+ * vanilla chunk save/load to recompute (verified on relog), not recomputed inline.
  */
 public final class ChunkPaster {
     private static final Logger LOG = LogUtils.getLogger();
@@ -78,17 +84,12 @@ public final class ChunkPaster {
                         skipped++;
                         continue;
                     }
-                    Block block = state.getBlock();
-                    ResourceLocation key = ForgeRegistries.BLOCKS.getKey(block);
-                    if (key != null && !ForgeRegistries.BLOCKS.containsKey(key) && PasteConfig.SKIP_MISSING_MODDED_ENTRIES) {
-                        skipped++;
-                        continue;
-                    }
                     BlockPos dstP = new BlockPos(srcP.getX() + dx, y, srcP.getZ() + dz);
                     if (!level.isInWorldBounds(dstP)) continue;
                     try {
-                        // Flag 3: update neighbours + send to clients. Lighting is recomputed by the chunk relight below.
-                        level.setBlock(dstP, state, 3);
+                        // Flag 2: sync to clients, NO neighbour updates (avoids redstone/pipe
+                        // cascades and light-engine storms mid-paste at 3 chunks/sec).
+                        level.setBlock(dstP, state, 2);
                         blocks++;
                     } catch (Exception ex) {
                         skipped++;
@@ -110,6 +111,10 @@ public final class ChunkPaster {
                     BlockPos dstP = new BlockPos(bx, beTag.getInt("y"), bz);
                     if (!level.isInWorldBounds(dstP)) continue;
                     BlockState dstState = level.getBlockState(dstP);
+                    if (!dstState.hasBlockEntity()) {
+                        skipped++; // mod missing here -> target block can't host the BE
+                        continue;
+                    }
                     BlockEntity be = BlockEntity.loadStatic(dstP, dstState, beTag);
                     if (be != null) {
                         level.getChunkAt(dstP).setBlockEntity(be);
@@ -130,10 +135,13 @@ public final class ChunkPaster {
                 CompoundTag eTag = ((CompoundTag) t).copy();
                 try {
                     offsetEntityTag(eTag, dx, dz);
+                    eTag.remove("UUID"); // fresh UUID: re-pastes never collide with live entities
                     Entity spawned = EntityType.loadEntityRecursive(eTag, level, e -> e);
                     if (spawned != null) {
                         level.addFreshEntity(spawned);
                         ents++;
+                    } else {
+                        skipped++; // unknown (modded, mod missing) entity id
                     }
                 } catch (Exception ex) {
                     skipped++;
@@ -164,10 +172,13 @@ public final class ChunkPaster {
             CompoundTag eTag = ((CompoundTag) t).copy();
             try {
                 offsetEntityTag(eTag, dx, dz);
+                eTag.remove("UUID"); // fresh UUID: re-pastes never collide with live entities
                 Entity spawned = EntityType.loadEntityRecursive(eTag, level, e -> e);
                 if (spawned != null) {
                     level.addFreshEntity(spawned);
                     count++;
+                } else {
+                    skipped++; // unknown (modded, mod missing) entity id
                 }
             } catch (Exception ex) {
                 skipped++;

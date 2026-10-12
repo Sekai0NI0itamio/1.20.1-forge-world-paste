@@ -30,7 +30,8 @@ public final class PasteSession {
     private final MinecraftServer server;
     private final ServerLevel level;
     private final SourceWorldReader.SourceWorld source;
-    private final Deque<PlayerDataMerger.ChunkTask> queue;
+    /** Server-thread drained; background thread only checks isEmpty() -> concurrent deque. */
+    private final java.util.concurrent.ConcurrentLinkedDeque<PlayerDataMerger.ChunkTask> queue;
     private final Stats stats = new Stats();
     private final String label;
     private long lastSecondNanos = System.nanoTime();
@@ -44,7 +45,7 @@ public final class PasteSession {
         this.server = server;
         this.level = level;
         this.source = source;
-        this.queue = new ArrayDeque<>(queue);
+        this.queue = new java.util.concurrent.ConcurrentLinkedDeque<>(queue);
         this.label = label;
         this.stats.total = queue.size();
     }
@@ -112,7 +113,7 @@ public final class PasteSession {
             }
         }
         if (queue.isEmpty() && finishNote.isEmpty()) {
-            finishNote = "done";
+            finishNote = cancelled ? "cancelled" : "done";
             LOG.info("WorldPaste finished: {}/{} chunks, {} blocks, {} blockEntities, {} entities, {} skipped",
                     stats.done, stats.total, stats.blocks, stats.blockEntities, stats.entities, stats.skipped);
         }
