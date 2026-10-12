@@ -52,6 +52,14 @@ public final class CopyCommand {
         return builder.buildFuture();
     };
 
+    private static final SuggestionProvider<CommandSourceStack> SPEED_SUGGEST = (ctx, builder) -> {
+        builder.suggest("normal");
+        builder.suggest("fast");
+        builder.suggest("turbo");
+        builder.suggest("instant");
+        return builder.buildFuture();
+    };
+
     private static Path inboxDir(MinecraftServer server) {
         return server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT)
                 .getParent().resolve(PasteConfig.INBOX_DIR);
@@ -71,7 +79,18 @@ public final class CopyCommand {
                                                                         StringArgumentType.getString(ctx, "zip"),
                                                                         StringArgumentType.getString(ctx, "dim"),
                                                                         IntegerArgumentType.getInteger(ctx, "x"),
-                                                                        IntegerArgumentType.getInteger(ctx, "z"))))))))
+                                                                        IntegerArgumentType.getInteger(ctx, "z"), null))
+                                                                .then(Commands.argument("speed", StringArgumentType.word()).suggests(SPEED_SUGGEST)
+                                                                        .executes(ctx -> startPaste(ctx.getSource(),
+                                                                                StringArgumentType.getString(ctx, "zip"),
+                                                                                StringArgumentType.getString(ctx, "dim"),
+                                                                                IntegerArgumentType.getInteger(ctx, "x"),
+                                                                                IntegerArgumentType.getInteger(ctx, "z"),
+                                                                                StringArgumentType.getString(ctx, "speed")))))))))
+                        .then(Commands.literal("speed")
+                                .then(Commands.argument("mode", StringArgumentType.word()).suggests(SPEED_SUGGEST)
+                                        .executes(ctx -> speed(ctx.getSource(),
+                                                StringArgumentType.getString(ctx, "mode")))))
                         .then(Commands.literal("status").executes(ctx -> status(ctx.getSource())))
                         .then(Commands.literal("cancel").executes(ctx -> {
                             PasteSession.cancel();
@@ -90,8 +109,14 @@ public final class CopyCommand {
                                         StringArgumentType.getString(ctx, "mode"))))));
     }
 
-    private static int startPaste(CommandSourceStack src, String zip, String dim, int x, int z) {
+    private static int startPaste(CommandSourceStack src, String zip, String dim, int x, int z, String speedOrNull) {
         MinecraftServer server = src.getServer();
+        PasteSession.PasteMode mode = speedOrNull == null ? PasteSession.defaultMode()
+                : PasteSession.PasteMode.parse(speedOrNull);
+        if (mode == null) {
+            src.sendFailure(Component.literal("WorldPaste: unknown speed '" + speedOrNull + "' — use normal, fast, turbo, or instant."));
+            return 0;
+        }
         if (!dim.equals("overworld") && !dim.equals("the_nether") && !dim.equals("the_end")) {
             src.sendFailure(Component.literal("WorldPaste: dim must be overworld, the_nether, or the_end."));
             return 0;
@@ -150,7 +175,7 @@ public final class CopyCommand {
                         }
 
                         PasteSession session = new PasteSession(server, level, finalSource, tasks,
-                                zip + " -> " + dim + " @ " + x + "," + z);
+                                zip + " -> " + dim + " @ " + x + "," + z, mode);
                         String note = "playerdata: " + report.copied() + " copied, "
                                 + report.keptLive() + " conflicts kept-live, "
                                 + report.skipped() + " skipped."
@@ -162,9 +187,22 @@ public final class CopyCommand {
                         }
                         int total = tasks.size();
                         ChunkPos center = new ChunkPos(x >> 4, z >> 4);
+                        String pace = switch (mode) {
+                            case NORMAL -> "~3/sec";
+                            case FAST -> "~20/sec";
+                            case TURBO -> "as fast as ~80% of each tick allows (heavy lag expected)";
+                            case INSTANT -> "UNCAPPED — server will freeze until done";
+                        };
+                        if (mode == PasteSession.PasteMode.TURBO || mode == PasteMode.INSTANT) {
+                            WorldPasteMod.LOGGER.warn("[WorldPaste] {} started in {} mode: {} chunks — expect severe lag{}",
+                                    zip, mode, total,
+                                    mode == PasteSession.PasteMode.INSTANT
+                                            ? " and a possible watchdog kill on large worlds; kick players first"
+                                            : "; consider kicking players");
+                        }
                         src.sendSuccess(() -> Component.literal(
-                                "WorldPaste: started " + total + " chunks at ~3/sec centred on chunk "
-                                        + center + " (" + total / 3 + "s est). " + note), true);
+                                "WorldPaste: started " + total + " chunks at " + pace + " centred on chunk "
+                                        + center + " [" + mode + "]. " + note), true);
                         if (!report.conflicts().isEmpty()) {
                             src.sendSuccess(() -> Component.literal(
                                     "WorldPaste: " + report.conflicts().size()
@@ -185,6 +223,34 @@ public final class CopyCommand {
         return 1;
     }
 
+    private static int speed(CommandSourceStack src, String modeName) {
+        PasteSession.PasteMode mode = PasteSession.PasteMode.parse(modeName);
+        if (mode == null) {
+            src.sendFailure(Component.literal("WorldPaste: unknown speed '" + modeName + "' — use normal, fast, turbo, or instant."));
+            return 0;
+        }
+        PasteSession.defaultMode(mode);
+        PasteSession active = PasteSession.active();
+        if (active != null && !active.isFinished()) {
+            active.mode(mode);
+            src.sendSuccess(() -> Component.literal(
+                    "WorldPaste: speed set to " + mode + " (applied to the running paste immediately)."), true);
+        } else {
+            src.sendSuccess(() -> Component.literal(
+                    "WorldPaste: default speed set to " + mode + " (applies to the next /copy world)."), true);
+        }
+        if (mode == PasteSession.PasteMode.TURBO) {
+            src.sendSuccess(() -> Component.literal(
+                    "WorldPaste warning: TURBO uses ~80% of every server tick — expect heavy lag."), true);
+        } else if (mode == PasteSession.PasteMode.INSTANT) {
+            src.sendSuccess(() -> Component.literal(
+                    "WorldPaste warning: INSTANT is uncapped — the server WILL freeze, and large worlds "
+                            + "can trip the watchdog (max-tick-time) kill. Kick players first."), true);
+        }
+        WorldPasteMod.LOGGER.info("[WorldPaste] speed set to {} by {}", mode, src.getTextName());
+        return 1;
+    }
+
     private static int status(CommandSourceStack src) {
         PasteSession s = PasteSession.active();
         if (s == null) {
@@ -195,7 +261,8 @@ public final class CopyCommand {
         src.sendSuccess(() -> Component.literal("WorldPaste [" + s.label() + "]: "
                 + st.done + "/" + st.total + " chunks, " + st.blocks + " blocks, "
                 + st.blockEntities + " block-entities, " + st.entities + " entities, "
-                + st.skipped + " skipped" + (s.isFinished() ? " FINISHED " + s.finishNote() : " …")), false);
+                + st.skipped + " skipped [" + s.mode() + "]"
+                + (s.isFinished() ? " FINISHED " + s.finishNote() : " …")), false);
         return 1;
     }
 

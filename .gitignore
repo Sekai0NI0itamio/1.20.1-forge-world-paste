@@ -12,3 +12,5 @@ mcmodsrepo/
 .DS_Store
 /worldpaste_inbox/
 /worldpaste_tmp/
+.opencode-data/
+.opencode/

@@ -86,6 +86,10 @@ public final class ChunkPaster {
                     }
                     BlockPos dstP = new BlockPos(srcP.getX() + dx, y, srcP.getZ() + dz);
                     if (!level.isInWorldBounds(dstP)) continue;
+                    if (state.isAir() && level.getBlockState(dstP).isAir()) {
+                        blocks++; // air-onto-air: nothing to write (huge win in sparse caves/sky)
+                        continue;
+                    }
                     try {
                         // Flag 2: sync to clients, NO neighbour updates (avoids redstone/pipe
                         // cascades and light-engine storms mid-paste at 3 chunks/sec).
